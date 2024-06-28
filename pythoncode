@@ -1,0 +1,129 @@
+#Import libraries
+from datetime import datetime
+import numpy as np
+import calendar
+import time
+import hashlib
+import requests
+import json
+import pandas as pd
+
+#Establish 'id' and 'key' variables needed to connect to MedHub's API
+id = [REDACTED FOR PRIVACY]
+key = [REDACTED FOR PRIVACY]
+
+#Establish a start and end date to collect the data - end date is always the current date
+start_date = "2023-12-01"
+end_date = datetime.today().strftime('%Y-%m-%d')
+
+#Establish a list of MedHub userIDs
+id_list = [REDACTED FOR PRIVACY - this would otherwise be a list of the resident's MedHub userIDs]
+
+#Create a list to store the results of the below for loop
+list =[]
+
+#The below for loop will run every MedHubID from the 'id_list' through the request to get data on the user, which will ultimately be stored into a DataFrame.
+for medhub_id in id_list:
+    request = '{"userID":'+str(medhub_id)+', "startDate": "'+str(start_date)+'", "endDate":"'+str(end_date)+'"}'
+    timestamp = calendar.timegm(time.gmtime())
+    string = ""+str(id)+"|"+str(timestamp)+"|"+str(key)+"|"+str(request)+""
+  
+    hashless_code = hashlib.new('sha256')
+    hashless_code.update(string.encode())
+  
+    verify = hashless_code.hexdigest()
+
+    url = "https://rrhs.medhub.com/functions/api/dutyhours/timesheets"
+    payload = 'clientID={}&ts={}&type=json&request={}&verify={}'.format(id,timestamp,request,verify)
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    response = requests.request("POST", url, headers=headers, data=payload)
+
+    response_dict = response.json()
+
+    bdf=pd.DataFrame(response_dict)
+
+    bdf = bdf.loc[:, bdf.columns.intersection(["date", "status", "start_time", "end_time"])]
+
+    bdf.insert(0,"MedHubID",medhub_id)
+
+    list.append(bdf)
+
+df = pd.concat(list) 
+
+#df will now contatin the date and status of the residents' work hours submissions for every day from the defined start_date and end_date variables.
+#However, we also want the name of the program the residents are in, so we can group the data for better analysis later.
+
+
+#The below loop is similar to the first, but this time we are retreiving the name of the program each MedHubID belongs to.
+list2 = []
+
+for medhub_id in id_list:
+    request = '{"userID":'+str(medhub_id)+'}'
+    string = ""+str(id)+"|"+str(timestamp)+"|"+str(key)+"|"+str(request)+""
+  
+    hashless_code = hashlib.new('sha256')
+    hashless_code.update(string.encode())
+
+    verify = hashless_code.hexdigest()
+
+    url = "https://rrhs.medhub.com/functions/api/users/residentInfo"
+    payload = 'clientID={}&ts={}&type=json&request={}&verify={}'.format(id,timestamp,request,verify)
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    response = requests.request("POST", url, headers=headers, data=payload)
+
+    response_dict=response.json()
+
+    bdf2=pd.DataFrame(response_dict, index = [1])
+
+    bdf2=bdf2.loc[:, bdf2.columns.intersection(["program_name", "name_first", "name_last"])]
+
+    bdf2.insert(0,"MedHubID", medhub_id)
+
+    list2.append(bdf2)
+
+df2=pd.concat(list2)
+
+
+#Now we want to combine the two DataFrames so we not only have the submission status and dates, but the program those submissions belonged to all in one DataFrame.
+#This is done by merging the two DataFrames, using the MedhubIDs as the key.
+data=pd.merge(df,df2, on="MedHubID")
+
+
+#The DataFrame is exported to Excel
+data.to_excel(r"[REDACTED FOR PRIVACY]", sheet_name="Data Sheet", index=False)
+
+
+#The intent with exporting the DataFrame to an Excel sheet is to further analyze the data, and to create a dashboard for visualization.
+#Our company does not use Tableau or Power Bi, so Excel is the best option to share data insights.
+
+
+#Ultimately, I want the raw data to be placed into a table in Excel for organization - however, I couldn't find a nice way to do directly.
+#The workaround is to export the raw data to an Excel workbook, then run a Macro I wrote in a different workbook that will copy the data to the final workbook that will contatin the analysis and visualization.
+#While this may seem like extra steps, I wanted the end result to be a clean, non-macro workbook that my co-workers could view and interact with.  No code, no macros, just the data and visualizations.
+
+#Open all the Excel workbooks in the background.
+import xlwings as xw 
+excel_app = xw.App(visible=False)
+data_wb = xw.Book(r"[REDACTED FOR PRIVACY]")
+analysis_wb = xw.Book(r"[REDACTED FOR PRIVACY]")
+macro_wb = xw.Book(r"[REDACTED FOR PRIVACY]")
+
+#Run the macro to copy the data into a table in a new workbook - this is also completely dynamic, so the table size will change as the size of the data changes.
+copy_data = macro_wb.macro("Module1.CopyData")
+copy_data()
+
+#Save all the Excel workbooks
+data_wb.save()
+analysis_wb.save()
+macro_wb.save()
+
+#Close all the Excel workbooks
+data_wb.close()
+analysis_wb.close()
+macro_wb.close()
+
+#Stop Excel from running in background
+excel_app.quit()
+
+
+#End of Code - run time is usually around 12 minutes
